@@ -1,70 +1,203 @@
-var mysql = require("mysql");
 var inquirer = require("inquirer");
+var mysql = require("mysql");
+require("dot-env");
+var Table = require('cli-table');
+var colors = require('colors');
 
-var connection = mysql.createConnection({
-    host: "localhost",
-    port: 3306,
+var customerCart = [];
 
-    user: "root",
-
-    password: "JAZ",
-    database: "bamazonDB"
-});
-
-connection.connect(function (err) {
-    if (err) throw err;
-    console.log("Connected to" + connection.threadId + "\n");
-    start();
-    // connection.end()
-});
-
-//Display Table with IDs, Product Name, and Pricing
-function showItems() {
-    connection.query("SELECT * FROM products", function (err, res) {
-        for (var i = 0; i < res.length; i++) {
-            console.log(res[i].item_id + " | " + res[i].product_name + " | " + res[i].price);
+function greeting(){
+    figlet.text('BAMazon!', {
+        font: 'Standard',
+        horizontalLayout: 'default',
+        verticalLayout: 'default'
+    }, function(err, data) {
+        if (err) {
+            console.log('Something went wrong...');
+            console.dir(err);
+            return;
         }
-        console.log("\n-----------------------------------\n");
+        console.log("Welcome to")
+        console.log(data);
     });
 }
 
-//Displays the questions of Item ID and 
-function start() {
-    showItems();
-    connection.query("SELECT * FROM products", function (err, res) {
-        if (err) throw err;
-        inquirer.prompt([{
-                    name: "choice",
-                    type: "input",
-                    message: "Do you know the product ID of your item?",
-                },
-                {
-                    name: "quantity",
-                    type: "input",
-                    message: "How many would you like to purchase?"
-                }
-            ])
-            .then(function (answer) {
-                var selection = answer.choice - 1;
-                if (answer.quantity > res[selection].stock_quantity) {
-                    console.log("Too many ordered.");
-                } else {
-                    connection.query(
-                        "UPDATE products SET ? WHERE ?", [{
-                                stock_quantity: answer.quantity
-                            },
-                            {
-                                item_id: answer.choice
-                            }
-                        ],
-                        function (err) {
-                            if (err) throw err;
-                            console.log("New item(s) in your cart!");
-                            // start();
-                        }
-                    );
-                }
+//DATABASE INITIALIZATION
+var connection = mysql.createConnection({
+    host: "localhost",
+    port: 3306,
+  
+    // Your username
+    user: "root",
+  
+    // Your password
+    password: 'JAZ',
+    database: "bamazon"
+  });
 
+connection.connect(function(err) {
+    if (err) throw err;
+    greeting();
+    runBamazon();    
+ });
+ 
+//main method
+function runBamazon(){
+    getProducts();
+}
+
+function getProducts(){
+    connection.query("SELECT * FROM products", function(err, res) {
+        if (err) throw err;
+        var table = new Table({
+            head: ['ID'.cyan, 'PRODUCT'.green, 'DEPT'.green, 'PRICE'.green, 'IN STOCK'.green]
+          , colWidths: [10, 30,20, 15, 15]
+        });
+        for (var i = 0; i < res.length; i++) {
+            table.push(
+                [
+                    res[i].item_id.toString().yellow, res[i].product_name, res[i].department_name, '$' + res[i].price.toFixed(2), res[i].stock_quantity
+                ]
+            )
+          }       
+        console.log(table.toString());
+        getUserProduct();       
+      });  
+      
+}   
+
+function getUserProduct(){
+    
+    inquirer.prompt([
+        {
+            type: "input",
+            name: "id",
+            message: "Please enter the ID of the product you would like to add to your cart!"
+        }
+    ]).then(function(answer){
+        var product = "";
+
+        connection.query("SELECT * from products WHERE ?", { item_id: answer.id }, function(err, res) {
+            if (err) throw err;
+            if(res.length > 0){
+                var table = new Table({
+                    head: ['ID'.cyan, 'PRODUCT'.green, 'DEPT'.green, 'PRICE'.green, 'IN STOCK'.green]
+                  , colWidths: [10, 20,20, 15, 15]
+                });
+                table.push(
+                    [
+                        res[0].item_id, res[0].product_name, res[0].department_name, '$' + res[0].price.toFixed(2), res[0].stock_quantity
+                    ]
+                )
+                productQuantity = res[0].stock_quantity;
+                productId = res[0].item_id;
+                productName = res[0].product_name;
+                productPrice = res[0].price;
+
+                console.log(table.toString());
+                
+                getUserQuantity(productId, productQuantity, productName, productPrice );   
+                 
+            }
+            else{
+                console.log("That ID doesn't exist, please enter an id from the table".red  );
+                getUserProduct();
+            }
+        })
+    })    
+}
+
+function getUserQuantity(id, stockQuant, prodName, prodPrice){    
+    inquirer.prompt([
+        {
+            type: "input",
+            name: "number",
+            message: "Please enter the quantity of the product you would like to add to your cart!"
+        }
+    ]).then(function(answer){
+        if(answer.number < stockQuant){
+            console.log("Coming right up!".cyan);
+            connection.query("UPDATE products SET ? WHERE ?",
+            [
+              {
+                stock_quantity: stockQuant - answer.number
+              } ,
+              {
+                item_id: id
+              }
+            ],
+            function(error, res) {
+              if (error) throw error;
+              var item = {
+                  itemId : id,
+                  itemQuantity : parseInt(answer.number),
+                  itemName: prodName,
+                  itemPrice: prodPrice
+              }
+              customerCart.push(item);
+                console.log("Item(s) added!".cyan);   
+                requestNewItemOrder();             
             })
+            
+        }
+        else{
+            console.log("Insufficient stock");
+        }
+    })
+}
+
+function requestNewItemOrder(){
+    confirm("Would you like to add another item to your order?", getUserProduct, checkOut);
+}
+function requestNewOrder(){
+    confirm("Would you like to add another item to your order?", getUserProduct, checkOut);
+}
+
+function checkOut(){
+    var total = 0;
+
+    console.log("Here's your itemized receipt!".cyan);
+    var summaryTable = new Table({
+        head: ['ID'.cyan, 'PRODUCT'.green, 'PRICE'.green, 'QUANTITY'.green, 'TOTAL'.green]
+      , colWidths: [10, 20, 15, 15, 15]
     });
+    
+    for(var i =0; i <customerCart.length; i++){
+        var itemID = customerCart[i].itemId;
+        var itemName =  customerCart[i].itemName;
+        var itemPrice = customerCart[i].itemPrice;
+        var quantity = customerCart[i].itemQuantity;
+        var totalItemCost = quantity * itemPrice;
+        total += totalItemCost;
+        summaryTable.push(
+            [
+                itemID, itemName, '$' + itemPrice.toFixed(2), quantity, '$' + totalItemCost.toFixed(2)
+            ]
+        );
+    }
+    summaryTable.push([
+        "","","", "Total".green, '$' + total.toFixed(2)
+    ]
+    )
+    console.log(summaryTable.toString());
+    confirm("Would you like to make another order", getProducts, closeOut);
+}
+function confirm(question, callbackYes, callbackNo){
+    inquirer.prompt([
+        {
+            name: "response",
+            type: "confirm",
+            message: question
+        }
+    ]).then(function(answer){
+        if(answer.response){
+            callbackYes()
+        } else {
+            callbackNo()
+        }
+    })
+}
+function closeOut(){
+    console.log("Thank you! Come again!");
+    connection.end();
 }
